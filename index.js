@@ -20,12 +20,13 @@ const OUTPUT_TOPIC = process.env.OUTPUT_TOPIC || 'smart-campus/events/access';
 const SOURCE_SERVICE = process.env.SOURCE_SERVICE || 'team-gate';
 const WHITELIST_FILE = process.env.WHITELIST_FILE || 'Acessgate_uid_whitelist.csv';
 
-const HTTP_PORT = process.env.HTTP_PORT || 3000;
+const HTTP_PORT = parseInt(process.env.HTTP_PORT || '3000', 10);
 
 // Core Business
 const CORE_SERVICE_URL = process.env.CORE_SERVICE_URL || '';
 const CORE_ACCESS_CHECK_ENDPOINT = process.env.CORE_ACCESS_CHECK_ENDPOINT || '/access/check';
 const CORE_AUTH_TOKEN = process.env.CORE_AUTH_TOKEN || 'lab-token';
+const CORE_TIMEOUT_MS = parseInt(process.env.CORE_TIMEOUT_MS || '3000', 10);
 
 // =======================
 // Whitelist storage
@@ -99,7 +100,7 @@ function loadWhitelist() {
 
     console.log(`[INIT] Successfully loaded ${count} student records from whitelist.`);
   } catch (error) {
-    console.error(`[ERROR] Failed to read or parse whitelist file:`, error.message);
+    console.error('[ERROR] Failed to read or parse whitelist file:', error.message);
     process.exit(1);
   }
 }
@@ -115,13 +116,20 @@ async function callCoreAccessCheck(payload) {
     return null;
   }
 
-  // Mapping dữ liệu từ Access Gate sang contract của Core Business
   const corePayload = {
     cardId: payload.uid,
     gateId: payload.door_id,
     direction: String(payload.direction || '').toUpperCase(),
     timestamp: payload.timestamp
   };
+
+  const headers = {
+    'Content-Type': 'application/json'
+  };
+
+  if (CORE_AUTH_TOKEN) {
+    headers.Authorization = `Bearer ${CORE_AUTH_TOKEN}`;
+  }
 
   try {
     console.log(`[CORE] POST ${CORE_SERVICE_URL}${CORE_ACCESS_CHECK_ENDPOINT}`);
@@ -131,27 +139,59 @@ async function callCoreAccessCheck(payload) {
       `${CORE_SERVICE_URL}${CORE_ACCESS_CHECK_ENDPOINT}`,
       corePayload,
       {
-        timeout: 3000,
-        headers: {
-          Authorization: `Bearer ${CORE_AUTH_TOKEN}`,
-          'Content-Type': 'application/json'
-        }
+        timeout: CORE_TIMEOUT_MS,
+        headers
       }
     );
 
     console.log('[CORE] Response:', JSON.stringify(response.data, null, 2));
     return response.data;
   } catch (error) {
-    console.error('[CORE] Access check failed:', error.message);
+    const status = error.response?.status || null;
+    const responseData = error.response?.data || null;
+    const message = error.message || 'Unknown Core error';
+
+    console.error('[CORE] Access check failed:', {
+      status,
+      message,
+      response: responseData
+    });
 
     return {
       decision: 'UNKNOWN',
       decisionId: null,
       policyId: null,
       reasonCode: 'CORE_UNAVAILABLE',
-      reasonDetail: error.message
+      reasonDetail: message,
+      checkedAt: getLocalTimestamp()
     };
   }
+}
+
+function applyCoreDecision(currentAccessResult, currentReason, student, coreDecision) {
+  let access_result = currentAccessResult;
+  let reason = currentReason;
+
+  if (!coreDecision || coreDecision.decision === 'UNKNOWN') {
+    return { access_result, reason };
+  }
+
+  if (coreDecision.decision === 'ALLOW') {
+    if (student) {
+      access_result = 'granted';
+      reason = coreDecision.reasonCode || 'core_allowed';
+    } else {
+      access_result = 'denied';
+      reason = 'uid_not_found';
+    }
+  }
+
+  if (coreDecision.decision === 'DENY') {
+    access_result = 'denied';
+    reason = coreDecision.reasonCode || 'core_denied';
+  }
+
+  return { access_result, reason };
 }
 
 // =======================
@@ -259,18 +299,11 @@ client.on('message', async (topic, message) => {
     console.log(`[NO MATCH] UID: ${inputUid} -> NOT FOUND in whitelist.`);
   }
 
-  // Gọi Core Business sau khi Access Gate xử lý whitelist
   const coreDecision = await callCoreAccessCheck(payload);
-  if (coreDecision?.decision === 'DENY') 
-  {
-    access_result = 'denied';
-    reason = coreDecision.reasonCode || 'core_denied';
-  }
 
-  if (coreDecision?.decision === 'ALLOW' && student) {
-    access_result = 'granted';
-    reason = coreDecision.reasonCode || 'core_allowed';
-  }
+  const finalDecision = applyCoreDecision(access_result, reason, student, coreDecision);
+  access_result = finalDecision.access_result;
+  reason = finalDecision.reason;
 
   const responseEvent = {
     event_id: `access-event-${crypto.randomUUID()}`,
@@ -293,9 +326,13 @@ client.on('message', async (topic, message) => {
 
     core_decision: coreDecision?.decision || null,
     core_decision_id: coreDecision?.decisionId || null,
+    core_card_id: coreDecision?.cardId || null,
+    core_gate_id: coreDecision?.gateId || null,
     core_policy_id: coreDecision?.policyId || null,
     core_reason_code: coreDecision?.reasonCode || null,
-    core_reason_detail: coreDecision?.reasonDetail || null
+    core_reason_detail: coreDecision?.reasonDetail || null,
+    core_expires_at: coreDecision?.expiresAt || null,
+    core_checked_at: coreDecision?.checkedAt || null
   };
 
   client.publish(OUTPUT_TOPIC, JSON.stringify(responseEvent), { qos: 1 }, (err) => {
