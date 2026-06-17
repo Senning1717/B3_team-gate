@@ -1,0 +1,15 @@
+{
+  "name": "access-gate-service",
+  "version": "1.0.0",
+  "description": "AccessGate Service for Campus Access Control using HiveMQ and RFID UID",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "axios": "^1.18.0",
+    "dotenv": "^16.4.5",
+    "express": "^5.2.1",
+    "mqtt": "^5.5.0"
+  }
+}

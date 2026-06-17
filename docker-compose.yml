@@ -1,0 +1,16 @@
+services:
+  access-gate:
+    build: .
+    container_name: access-gate
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    ports:
+      - "3000:3000"
+
+    volumes:
+      - ./Acessgate_uid_whitelist.csv:/app/Acessgate_uid_whitelist.csv
+
+    command: npm start
