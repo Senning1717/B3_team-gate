@@ -354,12 +354,7 @@ app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
     service: 'access-gate',
-    mqtt_connected: client.connected,
-    whitelist_records: whitelist.size,
-    input_topic: INPUT_TOPIC,
-    output_topic: OUTPUT_TOPIC,
-    core_service_url: CORE_SERVICE_URL || null,
-    core_endpoint: CORE_ACCESS_CHECK_ENDPOINT,
+    product: 'B',
     timestamp: getLocalTimestamp()
   });
 });
