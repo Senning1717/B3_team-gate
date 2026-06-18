@@ -110,18 +110,31 @@ loadWhitelist();
 // =======================
 // Mapping + call Core Business API
 // =======================
+function mapGateIdToCoreGateId(doorId) {
+  const map = {
+    'gate-a': 'GATE-01',
+    'lab-a101': 'GATE-02'
+  };
+
+  return map[doorId] || 'GATE-99';
+}
 async function callCoreAccessCheck(payload) {
   if (!CORE_SERVICE_URL) {
     console.warn('[CORE] CORE_SERVICE_URL is not configured. Skipping Core integration.');
     return null;
   }
 
-  const corePayload = {
-    cardId: payload.uid,
-    gateId: payload.door_id,
-    direction: String(payload.direction || '').toUpperCase(),
-    timestamp: payload.timestamp
-  };
+const normalizedUid = normalizeUid(payload.uid);
+const student = whitelist.get(normalizedUid);
+
+const corePayload = {
+  cardId: student
+    ? `RFID-2026-${student.student_id.replace('SV', '').padStart(3, '0')}`
+    : 'RFID-2026-999',
+  gateId: mapGateIdToCoreGateId(payload.door_id),
+  direction: String(payload.direction || '').toUpperCase(),
+  timestamp: payload.timestamp
+};
 
   const headers = {
     'Content-Type': 'application/json'
@@ -298,7 +311,14 @@ client.on('message', async (topic, message) => {
 
     console.log(`[NO MATCH] UID: ${inputUid} -> NOT FOUND in whitelist.`);
   }
+  function mapGateIdToCoreGateId(doorId) {
+    const map = {
+      'gate-a': 'GATE-01',
+      'lab-a101': 'GATE-02'
+    };
 
+    return map[doorId] || 'GATE-99';
+  }
   const coreDecision = await callCoreAccessCheck(payload);
 
   const finalDecision = applyCoreDecision(access_result, reason, student, coreDecision);
@@ -360,5 +380,5 @@ app.get('/health', (req, res) => {
 });
 
 app.listen(HTTP_PORT, '0.0.0.0', () => {
-  console.log(`[HTTP] Health endpoint running at http://localhost:${HTTP_PORT}/health`);
+  console.log(`[HTTP] Health endpoint running at http://localhost:3000/health`);
 });
