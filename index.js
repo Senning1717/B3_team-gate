@@ -311,14 +311,7 @@ client.on('message', async (topic, message) => {
 
     console.log(`[NO MATCH] UID: ${inputUid} -> NOT FOUND in whitelist.`);
   }
-  function mapGateIdToCoreGateId(doorId) {
-    const map = {
-      'gate-a': 'GATE-01',
-      'lab-a101': 'GATE-02'
-    };
 
-    return map[doorId] || 'GATE-99';
-  }
   const coreDecision = await callCoreAccessCheck(payload);
 
   const finalDecision = applyCoreDecision(access_result, reason, student, coreDecision);
@@ -369,6 +362,98 @@ client.on('message', async (topic, message) => {
 // HTTP health endpoint
 // =======================
 const app = express();
+app.use(express.json());
+
+app.use(express.json());
+
+function validateAccessLogPayload(payload) {
+  const requiredFields = [
+    'event_id',
+    'event_type',
+    'timestamp',
+    'uid',
+    'door_id',
+    'direction',
+    'access_result',
+    'reason'
+  ];
+
+  const missingFields = requiredFields.filter((field) => !payload[field]);
+  return missingFields;
+}
+
+function publishCoreAccessLog(payload) {
+  const responseEvent = {
+    event_id: payload.event_id,
+    event_type: payload.event_type,
+    source_service: payload.source_service || 'core-service',
+    timestamp: payload.timestamp,
+    raw_event_id: payload.raw_event_id || null,
+    uid: payload.uid,
+    student_id: payload.student_id || null,
+    full_name: payload.full_name || null,
+    class_name: payload.class_name || null,
+    door_id: payload.door_id,
+    location: payload.location || null,
+    direction: payload.direction,
+    access_result: payload.access_result,
+    reason: payload.reason,
+    core_decision: payload.core_decision || null,
+    core_decision_id: payload.core_decision_id || null,
+    core_policy_id: payload.core_policy_id || null,
+    core_reason_code: payload.core_reason_code || null,
+    core_reason_detail: payload.core_reason_detail || null,
+    core_checked_at: payload.core_checked_at || getLocalTimestamp(),
+    received_by: SOURCE_SERVICE,
+    received_at: getLocalTimestamp()
+  };
+
+  client.publish(OUTPUT_TOPIC, JSON.stringify(responseEvent), { qos: 1 }, (err) => {
+    if (err) {
+      console.error('[MQTT] Failed to publish core log event:', err.message);
+    } else {
+      console.log(`[OUTGOING] Published core log event to topic "${OUTPUT_TOPIC}"`);
+      console.log(JSON.stringify(responseEvent, null, 2));
+    }
+  });
+}
+
+app.post('/access-log', (req, res) => {
+  const coreLog = req.body;
+
+  console.log('\n=== DATA FROM CORE ===');
+  console.log(JSON.stringify(coreLog, null, 2));
+
+  const requiredFields = [
+    'decisionId',
+    'decision',
+    'cardId',
+    'gateId',
+    'reasonCode',
+    'checkedAt'
+  ];
+
+  const missingFields = requiredFields.filter((field) => !coreLog[field]);
+
+  if (missingFields.length > 0) {
+    console.error(`[ACCESS-LOG] Missing mandatory field(s): ${missingFields.join(', ')}`);
+
+    return res.status(400).json({
+      status: 'error',
+      message: 'Missing mandatory field(s)',
+      missing_fields: missingFields
+    });
+  }
+
+  return res.status(200).json({
+    status: 'ok',
+    service: 'access-gate',
+    message: 'core access log received',
+    decision_id: coreLog.decisionId,
+    decision: coreLog.decision,
+    timestamp: getLocalTimestamp()
+  });
+});
 
 app.get('/health', (req, res) => {
   res.status(200).json({
